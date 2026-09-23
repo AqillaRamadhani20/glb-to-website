@@ -1,0 +1,28 @@
+{
+  "schema": "game-room.milestone-reviews.v1",
+  "roomId": "terminal-01-existing-glb",
+  "function": {
+    "status": "approved",
+    "approvedBy": "user brief",
+    "approvedAt": "2026-09-22",
+    "evidence": ["../README.md", "room-brief.json"],
+    "strangestElement": "Satu node GLB dapat memiliki beberapa primitive render.",
+    "notes": "Tujuan, input kamera, metadata pilihan, warna kategori, dan larangan modifikasi GLB ditetapkan eksplisit oleh pengguna."
+  },
+  "form": {
+    "status": "pending",
+    "approvedBy": "",
+    "approvedAt": "",
+    "evidence": ["asset-manifest.json"],
+    "strangestElement": "Model sangat lebar dan datar dibanding tinggi bangunan.",
+    "notes": "Form diwarisi dari GLB dan tidak diubah; approval artistik Blender tetap milik pengguna."
+  },
+  "runtime": {
+    "status": "pending",
+    "approvedBy": "",
+    "approvedAt": "",
+    "evidence": ["desktop-selected.png", "mobile-selected.png"],
+    "strangestElement": "592 node logis menghasilkan 623 render mesh karena multi-primitive.",
+    "notes": "Build dan smoke test otomatis lulus; approval manusia diperlukan sebelum deployment."
+  }
+}

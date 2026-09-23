@@ -1,0 +1,28 @@
+{
+  "schema": "game-room.layout.v1",
+  "roomId": "terminal-01-ground-floor-wayfinding",
+  "units": "meters",
+  "surfaces": [],
+  "instances": [
+    {
+      "id": "terminal-main-glb",
+      "source": "../public/models/buildings-ground-floor.glb",
+      "translation": [0, 0, 0],
+      "rotation": [0, 0, 0],
+      "scale": [1, 1, 1],
+      "hierarchyPolicy": "preserve",
+      "objectNamePolicy": "preserve-exact"
+    }
+  ],
+  "productionCamera": {
+    "strategy": "runtime-fit-from-current-glb-bounds",
+    "sourceCameraPolicy": "ignore-blender-camera",
+    "verticalFovDegrees": 36
+  },
+  "navigation": {
+    "source": "../public/navigation/navigation-graph-ground-floor.svg",
+    "viewBox": [0, 0, 22973, 3300],
+    "axis": "svg+x->world+x;svg+y->world+z",
+    "transformPolicy": "single-global-runtime-calibration"
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "schema": "game-room.room-brief.v1",
+  "roomId": "terminal-01-existing-glb",
+  "family": "custom",
+  "purpose": "Peta terminal 3D interaktif untuk inspeksi objek dan wayfinding berbasis object.name.",
+  "runtimeSurface": "Browser responsif dengan WebGL, Next.js, React Three Fiber, dan Three.js.",
+  "boundsMeters": [400.00000228545105, 4.800000190734863, 106.60700572724636],
+  "hero": {
+    "id": "terminal-main-glb",
+    "role": "Model utama yang disediakan pengguna",
+    "reservedBoundsMeters": [400.00000228545105, 4.800000190734863, 106.60700572724636]
+  },
+  "symmetry": {
+    "mode": "authored-existing-asset",
+    "order": 1,
+    "appliesTo": ["source-glb"],
+    "exceptions": ["Tidak dinilai ulang karena geometry dan layout tidak boleh diubah."]
+  },
+  "circulation": {
+    "description": "Navigasi kamera bebas melalui pan, orbit, zoom, pencarian nama, dan focus-object.",
+    "minimumClearanceMeters": 0
+  },
+  "productionCamera": {
+    "viewport": [1440, 900],
+    "location": [295.3, 268.2, 295.3],
+    "target": [0.000001142725523095578, 2.4000000953674316, -0.0000017344727893942036],
+    "verticalFovDegrees": 36
+  },
+  "performanceBudget": {
+    "maxSceneTriangles": 100000,
+    "maxVLowBytes": 2097152,
+    "maxHighTextureBytes": 0
+  },
+  "creditBudget": {
+    "maximumCredits": 0,
+    "approvalRequired": true
+  },
+  "environment": {
+    "type": "none",
+    "identity": "",
+    "source": "",
+    "assignmentKey": ""
+  },
+  "artifacts": {
+    "floorPlan": "",
+    "reflectedCeilingPlan": "",
+    "planMetadata": "",
+    "wallElevations": [],
+    "visualTarget": "desktop-selected.png",
+    "openingContactSheet": ""
+  }
+}

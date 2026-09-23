@@ -1,0 +1,62 @@
+{
+  "schema": "game-room.room-final-report.v1",
+  "roomId": "terminal-01-existing-glb",
+  "gates": {
+    "function": true,
+    "form": false,
+    "runtime": false
+  },
+  "formChecks": {
+    "floorPlanParity": false,
+    "primaryArrival": false,
+    "symmetry": false,
+    "shell": false,
+    "manifold": false,
+    "booleans": false,
+    "collisions": false,
+    "support": false,
+    "attachmentOrientation": false,
+    "ceilingAttachmentOrientation": false,
+    "seatingOrientation": false,
+    "focalDistribution": false,
+    "heroClearance": false,
+    "colonnades": false,
+    "screenClearance": true,
+    "scale": true,
+    "camera": true,
+    "ceilingCoverage": false,
+    "environmentCoverage": true,
+    "provenance": true
+  },
+  "reviewRenders": {
+    "corners": ["desktop.png", "desktop-selected.png"],
+    "ceiling": [],
+    "environment": {}
+  },
+  "runtimeChecks": {
+    "vlow": true,
+    "textureTiers": true,
+    "lightmap": false,
+    "lightingManifest": true,
+    "performance": true,
+    "browserCapture": "desktop-selected.png",
+    "errors": []
+  },
+  "postmortem": {
+    "observations": [
+      "GLB berisi 592 node bernama dan 623 primitive render.",
+      "Pemetaan event harus kembali ke node GLB, bukan memakai nama primitive buatan GLTFLoader.",
+      "Fit kamera perlu memperhitungkan aspect ratio untuk viewport mobile."
+    ],
+    "corrections": [
+      "Setiap primitive ditandai dengan identitas node GLB induknya.",
+      "Klik dibedakan dari drag memakai ambang gerak 5 piksel.",
+      "Camera fit dihitung dari delapan sudut bounding box pada horizontal dan vertical FOV."
+    ],
+    "remainingRisks": [
+      "Status dan informasi lokasi adalah metadata runtime berbasis aturan nama; backend CRUD belum disambungkan.",
+      "Persetujuan visual manusia tetap diperlukan sebelum deployment."
+    ]
+  },
+  "proposedLessons": []
+}

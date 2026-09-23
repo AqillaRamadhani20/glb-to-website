@@ -1,0 +1,31 @@
+{
+  "name": "terminal-3d-navigator",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "smoke": "node scripts/runtime-smoke.mjs",
+    "inspect:model": "node scripts/inspect-glb.mjs",
+    "audit:assets": "node scripts/audit-new-assets.mjs"
+  },
+  "dependencies": {
+    "@react-three/drei": "10.7.8",
+    "@react-three/fiber": "9.7.0",
+    "lucide-react": "latest",
+    "next": "16.3.5",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "three": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@types/three": "latest",
+    "playwright-core": "^1.63.0",
+    "typescript": "latest"
+  }
+}

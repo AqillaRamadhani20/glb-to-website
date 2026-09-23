@@ -1,0 +1,9 @@
+{
+  "schema": "game-room.opening-schedule.v1",
+  "roomId": "terminal-01-existing-glb",
+  "primaryArrival": {
+    "openingId": "",
+    "exception": "Viewer read-only dari GLB yang sudah authored; tidak ada geometry atau opening yang dibuat, dipotong, atau diubah."
+  },
+  "openings": []
+}
