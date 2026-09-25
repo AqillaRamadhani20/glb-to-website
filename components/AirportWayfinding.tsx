@@ -43,11 +43,11 @@ import { RoutePlaybackController } from "@/components/RoutePlaybackController";
 import {
   DEBUG_NAVIGATION,
   calibrateSvgToWorld,
-  findNearestRoutableNode,
-  findPoiCandidates,
   findShortestPath,
   getRouteSvgPoints,
   parseNavigationSvg,
+  resolveBuildingNavigationNodes,
+  selectBestBuildingStartNode,
   svgToWorld,
   worldToSvg,
   type NavigationGraph,
@@ -65,6 +65,7 @@ import {
   createSelectedObject,
   type SelectedObject,
 } from "@/lib/object-metadata";
+import { GROUND_FLOOR_NAVIGATION_URL } from "@/lib/assets";
 
 type ViewerApi = {
   resetView: () => void;
@@ -374,7 +375,7 @@ export function AirportWayfinding() {
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch("/navigation/navigation-graph-ground-floor.svg", {
+    fetch(GROUND_FLOOR_NAVIGATION_URL, {
       signal: controller.signal,
     })
       .then((response) => {
@@ -419,6 +420,39 @@ export function AirportWayfinding() {
     });
   }, [bounds, graph, selectableBuildings]);
 
+  const buildingStartAudit = useMemo(() => {
+    if (!graph || !navigationTransform) return null;
+    const results = selectableBuildings.map((record) => {
+      record.object.updateWorldMatrix(true, false);
+      const center = new THREE.Box3()
+        .setFromObject(record.object)
+        .getCenter(new THREE.Vector3());
+      const resolution = resolveBuildingNavigationNodes(
+        graph,
+        record.name,
+        worldToSvg(center.x, center.z, navigationTransform),
+      );
+      return {
+        name: record.name,
+        startable: resolution.nodes.length > 0,
+        method: resolution.method,
+      };
+    });
+    return {
+      totalBuildings: results.length,
+      startableBuildings: results.filter((item) => item.startable).length,
+      semanticPoi: results.filter(
+        (item) => item.startable && item.method === "semantic POI",
+      ).length,
+      nearestNodeFallback: results.filter(
+        (item) => item.startable && item.method === "nearest valid node",
+      ).length,
+      unmappedBuildings: results
+        .filter((item) => !item.startable)
+        .map((item) => item.name),
+    };
+  }, [graph, navigationTransform, selectableBuildings]);
+
   const routeWorldPoints = useMemo(() => {
     if (!graph || !navigationTransform || !routeState.result) return [];
     return getRouteSvgPoints(graph, routeState.result).map((point) =>
@@ -450,6 +484,60 @@ export function AirportWayfinding() {
     [objects, selected?.uuid],
   );
 
+  const commitStartNode = useCallback(
+    (nodeId: string, message: string) => {
+      if (!graph || !navigationTransform) return;
+      const node = graph.nodeById.get(nodeId);
+      if (!node || !(graph.adjacency.get(nodeId)?.length)) return;
+      setStartNodeId(nodeId);
+      setSelectingStart(false);
+      setViewMode("map");
+      setRouteProgress(null);
+      setRoutePaused(false);
+      setRouteState({
+        result: null,
+        destinationNodeId: null,
+        resolution: null,
+        message,
+      });
+      const [x, y, z] = svgToWorld(node, navigationTransform);
+      viewerApi.current?.focusPoint(new THREE.Vector3(x, y, z));
+    },
+    [graph, navigationTransform],
+  );
+
+  const setBuildingAsStart = useCallback(
+    (record: SceneObjectRecord) => {
+      if (!graph || !navigationTransform) return;
+      record.object.updateWorldMatrix(true, false);
+      const center = new THREE.Box3()
+        .setFromObject(record.object)
+        .getCenter(new THREE.Vector3());
+      const centerSvg = worldToSvg(center.x, center.z, navigationTransform);
+      const resolution = resolveBuildingNavigationNodes(
+        graph,
+        record.name,
+        centerSvg,
+      );
+      const node = selectBestBuildingStartNode(graph, resolution, centerSvg);
+      if (!node) {
+        setRouteState({
+          result: null,
+          destinationNodeId: null,
+          resolution: null,
+          message: "Building ini belum memiliki node graph asli yang valid.",
+        });
+        return;
+      }
+      setSelected(createSelectedObject(record.object));
+      commitStartNode(
+        node.id,
+        `Start ${record.name} tersimpan melalui ${resolution.method}. Pilih tujuan.`,
+      );
+    },
+    [commitStartNode, graph, navigationTransform],
+  );
+
   const calculateRoute = useCallback(
     (record: SceneObjectRecord) => {
       if (!startNodeId) {
@@ -463,24 +551,17 @@ export function AirportWayfinding() {
         return;
       }
       if (!graph || !navigationTransform) return;
-      const semanticCandidates = findPoiCandidates(graph, record.name).filter(
-        (node) => (graph.adjacency.get(node.id)?.length ?? 0) > 0,
+      record.object.updateWorldMatrix(true, false);
+      const center = new THREE.Box3()
+        .setFromObject(record.object)
+        .getCenter(new THREE.Vector3());
+      const resolved = resolveBuildingNavigationNodes(
+        graph,
+        record.name,
+        worldToSvg(center.x, center.z, navigationTransform),
       );
-      let candidates = semanticCandidates;
-      let resolution: RouteState["resolution"] = "semantic POI";
-
-      if (!candidates.length) {
-        record.object.updateWorldMatrix(true, false);
-        const center = new THREE.Box3()
-          .setFromObject(record.object)
-          .getCenter(new THREE.Vector3());
-        const nearest = findNearestRoutableNode(
-          graph,
-          worldToSvg(center.x, center.z, navigationTransform),
-        );
-        candidates = nearest ? [nearest] : [];
-        resolution = "nearest valid node";
-      }
+      const candidates = resolved.nodes;
+      const resolution: RouteState["resolution"] = resolved.method;
 
       const routes = candidates
         .map((candidate) => ({
@@ -522,19 +603,27 @@ export function AirportWayfinding() {
     [graph, navigationTransform, startNodeId],
   );
 
-  const handleSelect = useCallback((selection: SelectedObject) => {
-    setSelected(selection);
-    setRouteProgress(null);
-    setRoutePaused(false);
-    setRouteState({
-      result: null,
-      destinationNodeId: null,
-      resolution: null,
-      message: startNodeId
-        ? "Tekan Route Here untuk menghitung rute."
-        : "Pilih posisi awal terlebih dahulu.",
-    });
-  }, [startNodeId]);
+  const handleSelect = useCallback(
+    (selection: SelectedObject) => {
+      const record = objects.find((item) => item.uuid === selection.uuid);
+      if (selectingStart && record) {
+        setBuildingAsStart(record);
+        return;
+      }
+      setSelected(selection);
+      setRouteProgress(null);
+      setRoutePaused(false);
+      setRouteState({
+        result: null,
+        destinationNodeId: null,
+        resolution: null,
+        message: startNodeId
+          ? "Tekan Route Here untuk menghitung rute."
+          : "Pilih posisi awal terlebih dahulu.",
+      });
+    },
+    [objects, selectingStart, setBuildingAsStart, startNodeId],
+  );
 
   const searchResults = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase("id-ID");
@@ -547,6 +636,12 @@ export function AirportWayfinding() {
   }, [query, selectableBuildings]);
 
   const chooseSearchResult = (record: SceneObjectRecord) => {
+    if (selectingStart) {
+      setQuery(record.name);
+      setSearchFocused(false);
+      setBuildingAsStart(record);
+      return;
+    }
     setSelected(createSelectedObject(record.object));
     setRouteProgress(null);
     setRoutePaused(false);
@@ -572,32 +667,20 @@ export function AirportWayfinding() {
       result: null,
       destinationNodeId: null,
       resolution: null,
-      message: "Klik node atau POI yang tampil pada map.",
+      message: "Klik building, node, atau POI yang tampil pada map.",
     });
   }, []);
 
   const selectStartNode = useCallback(
     (nodeId: string) => {
-      if (!graph || !navigationTransform) return;
-      const node = graph.nodeById.get(nodeId);
-      if (!node || !(graph.adjacency.get(nodeId)?.length)) return;
-      setStartNodeId(nodeId);
-      setSelectingStart(false);
-      setViewMode("map");
-      setRouteProgress(null);
-      setRoutePaused(false);
-      setRouteState({
-        result: null,
-        destinationNodeId: null,
-        resolution: null,
-        message: selectedRecord
+      commitStartNode(
+        nodeId,
+        selectedRecord
           ? "Titik awal tersimpan. Tekan Route Here."
           : "Titik awal tersimpan. Pilih building tujuan.",
-      });
-      const [x, y, z] = svgToWorld(node, navigationTransform);
-      viewerApi.current?.focusPoint(new THREE.Vector3(x, y, z));
+      );
     },
-    [graph, navigationTransform, selectedRecord],
+    [commitStartNode, selectedRecord],
   );
 
   const showVisitorPov = useCallback(() => {
@@ -720,14 +803,21 @@ export function AirportWayfinding() {
         center: bounds.center.toArray(),
         size: bounds.size.toArray(),
       },
-      navigationViewBox: "0 0 22973 3300",
+      navigationViewBox: graph.viewBox,
       graphCounts: graph.counts,
+      buildingStartCoverage: buildingStartAudit,
       runtimeColorCoverage: bounds.colorCoverage,
+      runtimeHiddenObjectNames: bounds.runtimeHiddenObjectNames,
       unmatchedEdges: graph.unmatchedEdges.map((edge) => ({
         id: edge.id,
         sourceId: edge.sourceId,
         startDistance: edge.startDistance,
         endDistance: edge.endDistance,
+      })),
+      conditionalEdges: graph.conditionalEdges.map((edge) => ({
+        id: edge.id,
+        conditionObjectName: edge.conditionObjectName,
+        matched: edge.matched,
       })),
       svgToWorld: navigationTransform,
     };
@@ -735,7 +825,7 @@ export function AirportWayfinding() {
     (
       window as Window & { __TERMINAL_WAYFINDING_AUDIT__?: unknown }
     ).__TERMINAL_WAYFINDING_AUDIT__ = report;
-  }, [bounds, graph, navigationTransform]);
+  }, [bounds, buildingStartAudit, graph, navigationTransform]);
 
   useEffect(() => {
     if (!routeMetrics || !routeState.result) return;
@@ -780,7 +870,7 @@ export function AirportWayfinding() {
         <Canvas
           dpr={[1, 1.75]}
           frameloop="demand"
-          camera={{ fov: 36, near: 0.01, far: 100000, position: [0, 10, 10] }}
+          camera={{ fov: 70, near: 0.01, far: 100000, position: [0, 10, 10] }}
           gl={{
             antialias: true,
             alpha: true,
@@ -1033,7 +1123,7 @@ export function AirportWayfinding() {
         )}
         {selectingStart && (
           <p className="start-selection-hint">
-            Pilih salah satu node atau POI yang tampil pada map.
+            Pilih building, node, atau POI yang tampil pada map.
           </p>
         )}
 
@@ -1140,6 +1230,15 @@ export function AirportWayfinding() {
               <div className="route-actions">
                 <button
                   type="button"
+                  onClick={() =>
+                    selectedRecord && setBuildingAsStart(selectedRecord)
+                  }
+                  disabled={!graph || !navigationTransform}
+                >
+                  <Flag size={14} /> Start Here
+                </button>
+                <button
+                  type="button"
                   onClick={() => selectedRecord && calculateRoute(selectedRecord)}
                   disabled={!startNodeId}
                 >
@@ -1168,7 +1267,10 @@ export function AirportWayfinding() {
           <dl>
             <div>
               <dt>viewBox</dt>
-              <dd>0 0 22973 3300</dd>
+              <dd>
+                {graph.viewBox.minX} {graph.viewBox.minY} {graph.viewBox.width}{" "}
+                {graph.viewBox.height}
+              </dd>
             </div>
             <div>
               <dt>Node</dt>
@@ -1179,12 +1281,23 @@ export function AirportWayfinding() {
               <dd>{graph.counts.edges}</dd>
             </div>
             <div>
+              <dt>Conditional</dt>
+              <dd>{graph.counts.conditionalEdges} nonaktif</dd>
+            </div>
+            <div>
               <dt>POI orange</dt>
               <dd>{graph.counts.pois}</dd>
             </div>
             <div>
               <dt>Unmatched</dt>
               <dd>{graph.counts.unmatchedEdges}</dd>
+            </div>
+            <div>
+              <dt>Building start</dt>
+              <dd>
+                {buildingStartAudit?.startableBuildings ?? 0} /{" "}
+                {buildingStartAudit?.totalBuildings ?? 0}
+              </dd>
             </div>
             <div>
               <dt>Material color</dt>
@@ -1211,6 +1324,20 @@ export function AirportWayfinding() {
                 {navigationTransform.offsetZ.toFixed(4)}
               </dd>
             </div>
+            <div>
+              <dt>Kalibrasi</dt>
+              <dd>
+                {navigationTransform.source} / {" "}
+                {navigationTransform.calibrationAnchorCount} anchor
+              </dd>
+            </div>
+            <div>
+              <dt>RMSE (m)</dt>
+              <dd>
+                {navigationTransform.rmseX.toFixed(3)} / {" "}
+                {navigationTransform.rmseZ.toFixed(3)}
+              </dd>
+            </div>
           </dl>
           <details>
             <summary>Unmatched edge ({graph.unmatchedEdges.length})</summary>
@@ -1218,6 +1345,18 @@ export function AirportWayfinding() {
               {graph.unmatchedEdges.map((edge) => (
                 <li key={edge.id}>
                   {edge.id} / {edge.sourceId}
+                </li>
+              ))}
+            </ol>
+          </details>
+          <details>
+            <summary>
+              Conditional edge ({graph.conditionalEdges.length}, nonaktif)
+            </summary>
+            <ol className="unmatched-list">
+              {graph.conditionalEdges.map((edge) => (
+                <li key={edge.id}>
+                  {edge.id} / {edge.matched ? "matched" : "unmatched"}
                 </li>
               ))}
             </ol>
@@ -1238,6 +1377,9 @@ export function AirportWayfinding() {
         </span>
         <span className="legend-item">
           <i className="legend-unmatched" /> Edge gagal match
+        </span>
+        <span className="legend-item">
+          <i className="legend-conditional" /> Conditional nonaktif
         </span>
       </div>
 

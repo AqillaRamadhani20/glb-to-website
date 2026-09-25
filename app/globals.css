@@ -1226,6 +1226,7 @@ button {
 .legend-poi { background: #f58231 !important; }
 .legend-node { background: #ed4b4b !important; }
 .legend-unmatched { background: #ff2d86 !important; }
+.legend-conditional { background: #d946ef !important; }
 
 @media (max-width: 900px) {
   .topbar {

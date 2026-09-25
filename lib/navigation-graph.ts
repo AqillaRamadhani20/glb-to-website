@@ -1,12 +1,5 @@
-export const NAVIGATION_VIEWBOX = {
-  minX: 0,
-  minY: 0,
-  width: 22973,
-  height: 3300,
-} as const;
-
-// SVG nodes use a 9.5-unit radius. Valid edge endpoints top out at 16.81 units,
-// followed by a clear gap to 46.51 units, so 20 is a conservative hard cutoff.
+// The latest SVG uses smaller 6-unit nodes. Endpoint audit shows the last
+// legitimate gap at 10.01 SVG units, followed by a clear jump to 50 units.
 export const EDGE_MATCH_TOLERANCE_SVG = 20;
 
 export const DEBUG_NAVIGATION =
@@ -15,6 +8,13 @@ export const DEBUG_NAVIGATION =
 export type SvgPoint = {
   x: number;
   y: number;
+};
+
+export type SvgViewBox = {
+  minX: number;
+  minY: number;
+  width: number;
+  height: number;
 };
 
 export type NavigationNode = SvgPoint & {
@@ -36,6 +36,8 @@ export type NavigationEdge = {
   startDistance: number;
   endDistance: number;
   matched: boolean;
+  conditional: boolean;
+  conditionObjectName: string | null;
 };
 
 export type GraphArc = {
@@ -45,18 +47,23 @@ export type GraphArc = {
 };
 
 export type NavigationGraph = {
+  viewBox: SvgViewBox;
   nodes: NavigationNode[];
   edges: NavigationEdge[];
+  conditionalEdges: NavigationEdge[];
   nodeById: Map<string, NavigationNode>;
   edgeById: Map<string, NavigationEdge>;
   adjacency: Map<string, GraphArc[]>;
   unmatchedEdges: NavigationEdge[];
+  unmatchedConditionalEdges: NavigationEdge[];
   counts: {
     nodes: number;
     ordinaryNodes: number;
     pois: number;
     edges: number;
+    conditionalEdges: number;
     unmatchedEdges: number;
+    unmatchedConditionalEdges: number;
   };
 };
 
@@ -64,6 +71,11 @@ export type ShortestPathResult = {
   nodeIds: string[];
   edgeIds: string[];
   totalWeight: number;
+};
+
+export type BuildingNodeResolution = {
+  nodes: NavigationNode[];
+  method: "semantic POI" | "nearest valid node";
 };
 
 export type BuildingAnchor = {
@@ -87,7 +99,10 @@ export type SvgWorldTransform = {
   offsetZ: number;
   elevationY: number;
   axis: "svg+x->world+x;svg+y->world+z";
-  source: "semantic-least-squares" | "bounds-fallback";
+  // The transform is always global: it is applied identically to every SVG
+  // point. Semantic anchors only determine this one transform; they never
+  // move individual nodes or edges.
+  source: "semantic-ransac" | "source-bounds";
   calibrationAnchorCount: number;
   rejectedAnchorNames: string[];
   rmseX: number;
@@ -210,6 +225,13 @@ function euclidean(a: SvgPoint, b: SvgPoint) {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
+export function canonicalBuildingName(value: string) {
+  const trimmed = value.trim();
+  const match = trimmed.match(/^(T1|TI)-([A-Z]+)-0*(\d+)(?:_\d+)?$/i);
+  if (!match) return trimmed.toLocaleLowerCase("id-ID");
+  return `${match[1].toUpperCase()}-${match[2].toUpperCase()}-${Number(match[3])}`;
+}
+
 function svgElementPoint(element: Element): SvgPoint {
   if (element.tagName.toLowerCase() === "circle") {
     return {
@@ -263,14 +285,29 @@ export function parseNavigationSvg(
   }
 
   const root = document.documentElement;
-  const viewBox = root.getAttribute("viewBox");
-  if (viewBox !== "0 0 22973 3300") {
-    throw new Error("Unexpected navigation viewBox: " + viewBox);
+  const viewBoxValues = (root.getAttribute("viewBox") ?? "")
+    .trim()
+    .split(/[\s,]+/)
+    .map(Number);
+  if (
+    viewBoxValues.length !== 4 ||
+    viewBoxValues.some((value) => !Number.isFinite(value)) ||
+    viewBoxValues[2] <= 0 ||
+    viewBoxValues[3] <= 0
+  ) {
+    throw new Error("Navigation SVG has an invalid viewBox");
   }
+  const viewBox: SvgViewBox = {
+    minX: viewBoxValues[0],
+    minY: viewBoxValues[1],
+    width: viewBoxValues[2],
+    height: viewBoxValues[3],
+  };
 
   const poiGroup = document.getElementById("POI_ORANGE");
   const ordinaryGroup = document.getElementById("PATH_RED");
   const edgeGroup = document.getElementById("EDGES");
+  const conditionalEdgeGroup = document.getElementById("EDGES_CONDITIONAL");
   if (!poiGroup || !ordinaryGroup || !edgeGroup) {
     throw new Error("Navigation SVG is missing POI_ORANGE, PATH_RED, or EDGES");
   }
@@ -306,8 +343,11 @@ export function parseNavigationSvg(
   );
 
   const nodes = [...poiNodes, ...ordinaryNodes];
-  const edges: NavigationEdge[] = Array.from(edgeGroup.children).map(
-    (element, index) => {
+  const parseEdges = (
+    elements: Element[],
+    conditional: boolean,
+  ): NavigationEdge[] =>
+    elements.map((element, index) => {
       const sourceId = element.getAttribute("id");
       if (!sourceId) throw new Error("Edge is missing source id");
       const points = svgEdgePoints(element);
@@ -319,7 +359,9 @@ export function parseNavigationSvg(
       const to = endMatch.distance <= tolerance ? endMatch.node.id : null;
 
       return {
-        id: "EDGE_GF_" + String(index + 1).padStart(3, "0"),
+        id: conditional
+          ? sourceId
+          : "EDGE_GF_" + String(index + 1).padStart(3, "0"),
         sourceId,
         points,
         start,
@@ -329,8 +371,16 @@ export function parseNavigationSvg(
         startDistance: startMatch.distance,
         endDistance: endMatch.distance,
         matched: Boolean(from && to && from !== to),
+        conditional,
+        conditionObjectName: conditional
+          ? sourceId.split("__")[1] ?? null
+          : null,
       };
-    },
+    });
+  const edges = parseEdges(Array.from(edgeGroup.children), false);
+  const conditionalEdges = parseEdges(
+    conditionalEdgeGroup ? Array.from(conditionalEdgeGroup.children) : [],
+    true,
   );
 
   const nodeById = new Map(nodes.map((node) => [node.id, node]));
@@ -358,19 +408,27 @@ export function parseNavigationSvg(
   }
 
   const unmatchedEdges = edges.filter((edge) => !edge.matched);
+  const unmatchedConditionalEdges = conditionalEdges.filter(
+    (edge) => !edge.matched,
+  );
   return {
+    viewBox,
     nodes,
     edges,
+    conditionalEdges,
     nodeById,
     edgeById,
     adjacency,
     unmatchedEdges,
+    unmatchedConditionalEdges,
     counts: {
       nodes: nodes.length,
       ordinaryNodes: ordinaryNodes.length,
       pois: poiNodes.length,
       edges: edges.length,
+      conditionalEdges: conditionalEdges.length,
       unmatchedEdges: unmatchedEdges.length,
+      unmatchedConditionalEdges: unmatchedConditionalEdges.length,
     },
   };
 }
@@ -486,100 +544,216 @@ function fitAxis(
   return { scale, offset, rmse };
 }
 
+type CalibrationAnchor = {
+  name: string;
+  svgX: number;
+  svgY: number;
+  worldX: number;
+  worldZ: number;
+};
+
+type CalibrationCandidate = {
+  scaleX: number;
+  scaleZ: number;
+  offsetX: number;
+  offsetZ: number;
+};
+
+const CALIBRATION_INLIER_TOLERANCE_WORLD = 3;
+const MIN_SEMANTIC_CALIBRATION_ANCHORS = 12;
+
+function averagePoint<T extends { x: number; y: number }>(points: T[]): SvgPoint {
+  return {
+    x: points.reduce((sum, point) => sum + point.x, 0) / points.length,
+    y: points.reduce((sum, point) => sum + point.y, 0) / points.length,
+  };
+}
+
+function buildCalibrationAnchors(
+  graph: NavigationGraph,
+  buildings: BuildingAnchor[],
+): CalibrationAnchor[] {
+  const buildingsByName = new Map<string, BuildingAnchor[]>();
+  for (const building of buildings) {
+    const key = canonicalBuildingName(building.name);
+    const items = buildingsByName.get(key) ?? [];
+    items.push(building);
+    buildingsByName.set(key, items);
+  }
+
+  const poisByName = new Map<string, NavigationNode[]>();
+  for (const node of graph.nodes) {
+    if (node.kind !== "poi" || !node.semanticName) continue;
+    const key = canonicalBuildingName(node.semanticName);
+    const items = poisByName.get(key) ?? [];
+    items.push(node);
+    poisByName.set(key, items);
+  }
+
+  const anchors: CalibrationAnchor[] = [];
+  for (const [name, poiNodes] of poisByName) {
+    const matchingBuildings = buildingsByName.get(name);
+    if (!matchingBuildings?.length) continue;
+    const svg = averagePoint(poiNodes);
+    anchors.push({
+      name,
+      svgX: svg.x,
+      svgY: svg.y,
+      worldX:
+        matchingBuildings.reduce((sum, building) => sum + building.worldX, 0) /
+        matchingBuildings.length,
+      worldZ:
+        matchingBuildings.reduce((sum, building) => sum + building.worldZ, 0) /
+        matchingBuildings.length,
+    });
+  }
+  return anchors;
+}
+
+function residualForCalibration(
+  anchor: CalibrationAnchor,
+  candidate: CalibrationCandidate,
+) {
+  return Math.hypot(
+    anchor.worldX - (candidate.scaleX * anchor.svgX + candidate.offsetX),
+    anchor.worldZ - (candidate.scaleZ * anchor.svgY + candidate.offsetZ),
+  );
+}
+
+/**
+ * Fits one affine SVG -> XZ transform from semantic POI/building pairs.
+ * The source files can contain historical POI labels after tenant changes,
+ * therefore a consensus fit is used instead of allowing those outliers to
+ * distort the entire map. This is deliberately deterministic and global.
+ */
+function fitSemanticTransform(anchors: CalibrationAnchor[]) {
+  let best:
+    | { candidate: CalibrationCandidate; inliers: CalibrationAnchor[]; error: number }
+    | null = null;
+
+  for (let first = 0; first < anchors.length; first += 1) {
+    for (let second = first + 1; second < anchors.length; second += 1) {
+      const a = anchors[first];
+      const b = anchors[second];
+      const dx = b.svgX - a.svgX;
+      const dy = b.svgY - a.svgY;
+      if (Math.abs(dx) < 1 || Math.abs(dy) < 1) continue;
+
+      const candidate = {
+        scaleX: (b.worldX - a.worldX) / dx,
+        scaleZ: (b.worldZ - a.worldZ) / dy,
+        offsetX: 0,
+        offsetZ: 0,
+      };
+      // This broad range accepts a global axis flip (negative scale), while
+      // filtering degenerate pairs and accidental POI/building name matches.
+      if (
+        Math.abs(candidate.scaleX) < 0.003 ||
+        Math.abs(candidate.scaleX) > 0.1 ||
+        Math.abs(candidate.scaleZ) < 0.003 ||
+        Math.abs(candidate.scaleZ) > 0.1
+      ) {
+        continue;
+      }
+      candidate.offsetX = a.worldX - candidate.scaleX * a.svgX;
+      candidate.offsetZ = a.worldZ - candidate.scaleZ * a.svgY;
+
+      const inliers = anchors.filter(
+        (anchor) =>
+          residualForCalibration(anchor, candidate) <=
+          CALIBRATION_INLIER_TOLERANCE_WORLD,
+      );
+      const error = inliers.reduce(
+        (sum, anchor) => sum + residualForCalibration(anchor, candidate) ** 2,
+        0,
+      );
+      if (
+        !best ||
+        inliers.length > best.inliers.length ||
+        (inliers.length === best.inliers.length && error < best.error)
+      ) {
+        best = { candidate, inliers, error };
+      }
+    }
+  }
+
+  if (!best || best.inliers.length < MIN_SEMANTIC_CALIBRATION_ANCHORS) {
+    return null;
+  }
+
+  // Refit the winning consensus set using least squares, then filter/refit
+  // once more so every accepted anchor is coherent with the final transform.
+  let inliers = best.inliers;
+  let xFit = fitAxis(inliers.map((anchor) => ({ svg: anchor.svgX, world: anchor.worldX })));
+  let zFit = fitAxis(inliers.map((anchor) => ({ svg: anchor.svgY, world: anchor.worldZ })));
+  let candidate: CalibrationCandidate = {
+    scaleX: xFit.scale,
+    scaleZ: zFit.scale,
+    offsetX: xFit.offset,
+    offsetZ: zFit.offset,
+  };
+  inliers = anchors.filter(
+    (anchor) =>
+      residualForCalibration(anchor, candidate) <= CALIBRATION_INLIER_TOLERANCE_WORLD,
+  );
+  if (inliers.length < MIN_SEMANTIC_CALIBRATION_ANCHORS) return null;
+  xFit = fitAxis(inliers.map((anchor) => ({ svg: anchor.svgX, world: anchor.worldX })));
+  zFit = fitAxis(inliers.map((anchor) => ({ svg: anchor.svgY, world: anchor.worldZ })));
+  candidate = {
+    scaleX: xFit.scale,
+    scaleZ: zFit.scale,
+    offsetX: xFit.offset,
+    offsetZ: zFit.offset,
+  };
+  const finalInliers = anchors.filter(
+    (anchor) =>
+      residualForCalibration(anchor, candidate) <= CALIBRATION_INLIER_TOLERANCE_WORLD,
+  );
+
+  return { candidate, inliers: finalInliers, rmseX: xFit.rmse, rmseZ: zFit.rmse };
+}
+
 export function calibrateSvgToWorld(
   graph: NavigationGraph,
   buildings: BuildingAnchor[],
   bounds: BoundsCalibrationInput,
 ): SvgWorldTransform {
-  const buildingByName = new Map(
-    buildings.map((building) => [building.name, building]),
-  );
-  const poiBySemantic = new Map<string, NavigationNode[]>();
-  for (const node of graph.nodes) {
-    if (node.kind !== "poi" || !node.semanticName) continue;
-    if (!buildingByName.has(node.semanticName)) continue;
-    const collection = poiBySemantic.get(node.semanticName) ?? [];
-    collection.push(node);
-    poiBySemantic.set(node.semanticName, collection);
-  }
-
-  const rawAnchors = [...poiBySemantic].map(([name, nodes]) => {
-    const building = buildingByName.get(name)!;
+  const anchors = buildCalibrationAnchors(graph, buildings);
+  const semanticFit = fitSemanticTransform(anchors);
+  if (semanticFit) {
+    const acceptedNames = new Set(semanticFit.inliers.map((anchor) => anchor.name));
     return {
-      name,
-      svgX: nodes.reduce((sum, node) => sum + node.x, 0) / nodes.length,
-      svgY: nodes.reduce((sum, node) => sum + node.y, 0) / nodes.length,
-      worldX: building.worldX,
-      worldZ: building.worldZ,
-    };
-  });
-
-  if (rawAnchors.length < 3) {
-    const scaleX = bounds.sizeX / NAVIGATION_VIEWBOX.width;
-    const scaleZ = bounds.sizeZ / NAVIGATION_VIEWBOX.height;
-    return {
-      scaleX,
-      scaleZ,
-      offsetX:
-        bounds.centerX -
-        scaleX * (NAVIGATION_VIEWBOX.minX + NAVIGATION_VIEWBOX.width / 2),
-      offsetZ:
-        bounds.centerZ -
-        scaleZ * (NAVIGATION_VIEWBOX.minY + NAVIGATION_VIEWBOX.height / 2),
+      ...semanticFit.candidate,
       elevationY: bounds.floorY + 0.12,
       axis: "svg+x->world+x;svg+y->world+z",
-      source: "bounds-fallback",
-      calibrationAnchorCount: rawAnchors.length,
-      rejectedAnchorNames: [],
-      rmseX: 0,
-      rmseZ: 0,
+      source: "semantic-ransac",
+      calibrationAnchorCount: semanticFit.inliers.length,
+      rejectedAnchorNames: anchors
+        .filter((anchor) => !acceptedNames.has(anchor.name))
+        .map((anchor) => anchor.name),
+      rmseX: semanticFit.rmseX,
+      rmseZ: semanticFit.rmseZ,
     };
   }
 
-  const initialX = fitAxis(
-    rawAnchors.map((anchor) => ({ svg: anchor.svgX, world: anchor.worldX })),
-  );
-  const initialZ = fitAxis(
-    rawAnchors.map((anchor) => ({ svg: anchor.svgY, world: anchor.worldZ })),
-  );
-  const residuals = rawAnchors.map((anchor) => ({
-    name: anchor.name,
-    value: Math.hypot(
-      anchor.worldX - (initialX.scale * anchor.svgX + initialX.offset),
-      anchor.worldZ - (initialZ.scale * anchor.svgY + initialZ.offset),
-    ),
-  }));
-  const orderedResiduals = residuals.map((item) => item.value).sort((a, b) => a - b);
-  const medianResidual =
-    orderedResiduals[Math.floor(orderedResiduals.length / 2)] ?? 0;
-  const rejectionThreshold = Math.max(2.5, medianResidual * 3);
-  const acceptedNames = new Set(
-    residuals
-      .filter((item) => item.value <= rejectionThreshold)
-      .map((item) => item.name),
-  );
-  const accepted = rawAnchors.filter((anchor) => acceptedNames.has(anchor.name));
-  const fitX = fitAxis(
-    accepted.map((anchor) => ({ svg: anchor.svgX, world: anchor.worldX })),
-  );
-  const fitZ = fitAxis(
-    accepted.map((anchor) => ({ svg: anchor.svgY, world: anchor.worldZ })),
-  );
-
+  const scaleX = bounds.sizeX / graph.viewBox.width;
+  const scaleZ = bounds.sizeZ / graph.viewBox.height;
   return {
-    scaleX: fitX.scale,
-    scaleZ: fitZ.scale,
-    offsetX: fitX.offset,
-    offsetZ: fitZ.offset,
+    scaleX,
+    scaleZ,
+    offsetX:
+      bounds.centerX -
+      scaleX * (graph.viewBox.minX + graph.viewBox.width / 2),
+    offsetZ:
+      bounds.centerZ -
+      scaleZ * (graph.viewBox.minY + graph.viewBox.height / 2),
     elevationY: bounds.floorY + 0.12,
     axis: "svg+x->world+x;svg+y->world+z",
-    source: "semantic-least-squares",
-    calibrationAnchorCount: accepted.length,
-    rejectedAnchorNames: rawAnchors
-      .filter((anchor) => !acceptedNames.has(anchor.name))
-      .map((anchor) => anchor.name),
-    rmseX: fitX.rmse,
-    rmseZ: fitZ.rmse,
+    source: "source-bounds",
+    calibrationAnchorCount: 0,
+    rejectedAnchorNames: [],
+    rmseX: 0,
+    rmseZ: 0,
   };
 }
 
@@ -609,8 +783,12 @@ export function findPoiCandidates(
   graph: NavigationGraph,
   objectName: string,
 ): NavigationNode[] {
+  const canonicalObjectName = canonicalBuildingName(objectName);
   return graph.nodes.filter(
-    (node) => node.kind === "poi" && node.semanticName === objectName,
+    (node) =>
+      node.kind === "poi" &&
+      Boolean(node.semanticName) &&
+      canonicalBuildingName(node.semanticName!) === canonicalObjectName,
   );
 }
 
@@ -629,4 +807,63 @@ export function findNearestRoutableNode(
     }
   }
   return nearest;
+}
+
+const MAX_SEMANTIC_POI_DISTANCE_SVG = 500;
+
+export function resolveBuildingNavigationNodes(
+  graph: NavigationGraph,
+  objectName: string,
+  buildingCenter: SvgPoint,
+): BuildingNodeResolution {
+  const semanticNodes = findPoiCandidates(graph, objectName)
+    .filter((node) => (graph.adjacency.get(node.id)?.length ?? 0) > 0)
+    .filter(
+      (node) => euclidean(node, buildingCenter) <= MAX_SEMANTIC_POI_DISTANCE_SVG,
+    )
+    .sort(
+      (left, right) =>
+        euclidean(left, buildingCenter) - euclidean(right, buildingCenter),
+    );
+
+  if (semanticNodes.length) {
+    return { nodes: semanticNodes, method: "semantic POI" };
+  }
+
+  const nearest = findNearestRoutableNode(graph, buildingCenter);
+  return {
+    nodes: nearest ? [nearest] : [],
+    method: "nearest valid node",
+  };
+}
+
+export function selectBestBuildingStartNode(
+  graph: NavigationGraph,
+  resolution: BuildingNodeResolution,
+  buildingCenter: SvgPoint,
+) {
+  const reachableCount = (startNodeId: string) => {
+    const visited = new Set<string>();
+    const queue = [startNodeId];
+    while (queue.length) {
+      const current = queue.pop()!;
+      if (visited.has(current)) continue;
+      visited.add(current);
+      for (const arc of graph.adjacency.get(current) ?? []) {
+        if (!visited.has(arc.nodeId)) queue.push(arc.nodeId);
+      }
+    }
+    return visited.size;
+  };
+
+  return [...resolution.nodes]
+    .map((node) => ({
+      node,
+      reachable: reachableCount(node.id),
+      distance: euclidean(node, buildingCenter),
+    }))
+    .sort(
+      (left, right) =>
+        right.reachable - left.reachable || left.distance - right.distance,
+    )[0]?.node ?? null;
 }

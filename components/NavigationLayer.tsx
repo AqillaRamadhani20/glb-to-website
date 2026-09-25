@@ -110,14 +110,14 @@ function RouteRibbon({
     <group name="ACTIVE_ROUTE_FLOOR_RIBBON">
       <RouteSegmentBand
         points={points}
-        width={1.35}
+        width={0.65}
         elevation={0.065}
         color="#F7FBFF"
         renderOrder={28}
       />
       <RouteSegmentBand
         points={points}
-        width={0.98}
+        width={0.55}
         elevation={0.095}
         color="#06A9E5"
         renderOrder={29}
@@ -319,6 +319,10 @@ export function NavigationLayer({
     () => graph.edges.filter((edge) => edge.matched),
     [graph.edges],
   );
+  const matchedConditionalEdges = useMemo(
+    () => graph.conditionalEdges.filter((edge) => edge.matched),
+    [graph.conditionalEdges],
+  );
   const ordinaryNodes = useMemo(
     () => graph.nodes.filter((node) => node.kind === "node"),
     [graph.nodes],
@@ -396,6 +400,20 @@ export function NavigationLayer({
             opacity={1}
             renderOrder={11}
           />
+          <DebugSegments
+            edges={matchedConditionalEdges}
+            transform={transform}
+            color="#D946EF"
+            opacity={0.9}
+            renderOrder={11}
+          />
+          <DebugSegments
+            edges={graph.unmatchedConditionalEdges}
+            transform={transform}
+            color="#FF1744"
+            opacity={1}
+            renderOrder={12}
+          />
           <NodeInstances
             nodes={ordinaryNodes}
             transform={transform}
@@ -460,7 +478,7 @@ export function NavigationLayer({
             points={routeSegmentPoints}
             segments
             color="#F7FBFF"
-            lineWidth={14}
+            lineWidth={6}
             transparent
             opacity={0.98}
             depthTest={false}
@@ -473,7 +491,7 @@ export function NavigationLayer({
             points={routeSegmentPoints}
             segments
             color="#06A9E5"
-            lineWidth={10}
+            lineWidth={4}
             transparent
             opacity={1}
             depthTest={false}

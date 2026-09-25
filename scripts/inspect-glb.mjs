@@ -3,8 +3,8 @@ import { readFile } from "node:fs/promises";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
-const sourcePath = "BUILDINGS 3D TERBARU.glb";
-const publicPath = "public/models/buildings-ground-floor.glb";
+const sourcePath = process.argv[2] ?? "GLB TERBARU!.glb";
+const publicPath = process.argv[3] ?? "public/models/buildings-ground-floor.glb";
 const [sourceBuffer, publicBuffer] = await Promise.all([
   readFile(sourcePath),
   readFile(publicPath),
@@ -36,6 +36,19 @@ gltf.scene.traverse((object) => {
 
 const names = (json.nodes ?? []).map((node) => node.name).filter(Boolean);
 const duplicateNames = names.filter((name, index) => names.indexOf(name) !== index);
+const publicArrayBuffer = publicBuffer.buffer.slice(
+  publicBuffer.byteOffset,
+  publicBuffer.byteOffset + publicBuffer.byteLength,
+);
+const publicGltf = await new GLTFLoader().parseAsync(publicArrayBuffer, "");
+const publicNames = (publicGltf.parser.json.nodes ?? [])
+  .map((node) => node.name)
+  .filter(Boolean);
+const publicNameSet = new Set(publicNames);
+const sourceNameSet = new Set(names);
+const addedNames = names.filter((name) => !publicNameSet.has(name));
+const removedNames = publicNames.filter((name) => !sourceNameSet.has(name));
+const buildingPattern = /^(T1|TI)-GF-/i;
 const primitiveCount = (json.meshes ?? []).reduce(
   (total, mesh) => total + (mesh.primitives?.length ?? 0),
   0,
@@ -53,6 +66,10 @@ console.log(
       logicalNodes: json.nodes?.length ?? 0,
       namedNodes: names.length,
       duplicateNames,
+      buildingNames: names.filter((name) => buildingPattern.test(name)),
+      buildingCount: names.filter((name) => buildingPattern.test(name)).length,
+      addedNames,
+      removedNames,
       gltfMeshes: json.meshes?.length ?? 0,
       primitives: primitiveCount,
       runtimeRenderMeshes: renderMeshes,

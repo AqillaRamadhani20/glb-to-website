@@ -8,6 +8,8 @@ export type CategoryKey =
   | "door-glass"
   | "door-frame"
   | "escalator"
+  | "departure"
+  | "arrival"
   | "red-area"
   | "visitor"
   | "fountain"
@@ -46,6 +48,8 @@ export const COLOR_PALETTE: Record<CategoryKey, string> = {
   "door-glass": "#AEE6EC",
   "door-frame": "#34434A",
   escalator: "#C98B55",
+  departure: "#4FA66A",
+  arrival: "#4D82C4",
   "red-area": "#C95A56",
   visitor: "#E7D495",
   fountain: "#5AA9E6",
@@ -57,9 +61,13 @@ function categoryForObject(objectName: string): CategoryKey {
   if (/^t[i1]-gf-/.test(name)) return "building";
   if (name.startsWith("area_merah")) return "red-area";
   if (name.startsWith("area_visitor")) return "visitor";
-  if (name.startsWith("air-mancur")) return "fountain";
+  if (name.startsWith("air-mancur") || name.startsWith("fountain__")) {
+    return "fountain";
+  }
   if (/lost[ _-]*(n|and)?[ _-]*found/.test(name)) return "lost-found";
-  if (name.startsWith("eskalator")) return "escalator";
+  if (name.startsWith("eskalator") || name.startsWith("esc_vis__")) {
+    return "escalator";
+  }
   if (name.startsWith("door__")) return "door-frame";
   if (name.startsWith("dinding-kaca") || name.startsWith("glass__")) {
     return "glass";
@@ -67,10 +75,10 @@ function categoryForObject(objectName: string): CategoryKey {
   if (name.startsWith("tembok_pilar") || name.includes("pilar")) {
     return "pillar";
   }
+  if (name.startsWith("keberangkatan")) return "departure";
+  if (name.startsWith("kedatangan")) return "arrival";
   if (
     /^(rectangle|vector|curve)/.test(name) ||
-    name.startsWith("keberangkatan") ||
-    name.startsWith("kedatangan") ||
     name.includes("wall") ||
     name.includes("dinding") ||
     name.includes("tembok")
@@ -88,6 +96,8 @@ const CATEGORY_LABELS: Record<CategoryKey, string> = {
   "door-glass": "Kaca pintu",
   "door-frame": "Frame pintu",
   escalator: "Sirkulasi vertikal",
+  departure: "Area keberangkatan",
+  arrival: "Area kedatangan",
   "red-area": "Area merah",
   visitor: "Lantai area visitor",
   fountain: "Air mancur",

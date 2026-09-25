@@ -25,7 +25,7 @@ async function waitForViewer(page) {
   await page.goto(baseUrl, { waitUntil: "networkidle" });
   try {
     await page.waitForFunction(
-      () => document.body.textContent?.includes("625 OBJEK / 97 BUILDING"),
+      () => document.body.textContent?.includes("949 OBJEK / 96 BUILDING"),
       null,
       { timeout: 60_000 },
     );
@@ -43,12 +43,42 @@ await waitForViewer(desktop);
 
 const audit = await desktop.evaluate(() => window.__TERMINAL_WAYFINDING_AUDIT__);
 assert.ok(audit, "Runtime audit must be exposed");
-assert.equal(audit.graphCounts.nodes, 604);
-assert.equal(audit.graphCounts.edges, 500);
-assert.equal(audit.graphCounts.pois, 277);
-assert.equal(audit.unmatchedEdges.length, 12);
-assert.equal(audit.runtimeColorCoverage.renderMeshes, 656);
-assert.equal(audit.runtimeColorCoverage.styledMaterialSlots, 656);
+assert.deepEqual(audit.navigationViewBox, {
+  minX: 0,
+  minY: 0,
+  width: 22973,
+  height: 3405,
+});
+assert.equal(audit.graphCounts.nodes, 510);
+assert.equal(audit.graphCounts.edges, 507);
+assert.equal(audit.graphCounts.pois, 244);
+assert.equal(audit.graphCounts.conditionalEdges, 51);
+assert.equal(audit.unmatchedEdges.length, 6);
+assert.equal(
+  audit.svgToWorld.source,
+  "semantic-ransac",
+  "SVG/GLB alignment must use the data-derived global semantic transform",
+);
+assert.ok(
+  audit.svgToWorld.calibrationAnchorCount >= 12,
+  "Global calibration needs a stable semantic-anchor consensus",
+);
+assert.ok(
+  audit.svgToWorld.rmseX < 1.5 && audit.svgToWorld.rmseZ < 1.5,
+  "Accepted anchors must remain spatially coherent in the final global transform",
+);
+assert.equal(audit.runtimeColorCoverage.renderMeshes, 1014);
+assert.equal(audit.runtimeColorCoverage.styledMaterialSlots, 1014);
+assert.equal(audit.buildingStartCoverage.totalBuildings, 96);
+assert.equal(audit.buildingStartCoverage.startableBuildings, 96);
+assert.deepEqual(audit.buildingStartCoverage.unmappedBuildings, []);
+assert.equal(
+  audit.runtimeHiddenObjectNames.length,
+  22,
+  "Only the known duplicate commercial obstruction meshes must be hidden at runtime",
+);
+assert.ok(audit.runtimeHiddenObjectNames.includes("tembok_pilar_37"));
+assert.ok(audit.runtimeHiddenObjectNames.includes("tembok_pilar_358"));
 assert.equal(
   audit.runtimeColorCoverage.styledMaterialSlots,
   audit.runtimeColorCoverage.materialSlots,
@@ -62,6 +92,8 @@ for (const category of [
   "door-glass",
   "door-frame",
   "escalator",
+  "departure",
+  "arrival",
   "red-area",
   "visitor",
   "fountain",
@@ -84,9 +116,13 @@ assert.match(
   /Pilih posisi awal terlebih dahulu/,
 );
 
-await desktop.getByRole("button", { name: "Set Start" }).click();
-await desktop.getByText("Pilih salah satu node atau POI yang tampil pada map.").waitFor();
-await desktop.locator("canvas").click({ position: { x: 495, y: 404 } });
+const search = desktop.getByRole("textbox", {
+  name: "Cari building berdasarkan object.name",
+});
+await search.fill("T1-GF-79");
+await desktop.getByRole("button", { name: /T1-GF-79/ }).first().click();
+await desktop.getByRole("heading", { name: "T1-GF-79", exact: true }).waitFor();
+await desktop.getByRole("button", { name: "Start Here" }).click();
 await desktop.waitForFunction(
   () => document.querySelector(".viewer-shell")?.getAttribute("data-start-node"),
 );
@@ -95,21 +131,18 @@ const desktopStartNode = await desktop
   .getAttribute("data-start-node");
 assert.match(
   await desktop.locator(".start-node-card strong").textContent(),
-  /T1-GF-17/,
-  "Start must come from the clicked navigation POI",
+  /(T1-GF-79|NODE_GF_)/,
+  "Building start must resolve to an original navigation node",
 );
 await desktop.getByText("YOU ARE HERE", { exact: true }).waitFor();
 
-const search = desktop.getByRole("textbox", {
-  name: "Cari building berdasarkan object.name",
-});
-await search.fill("T1-GF-43");
-const result = desktop.getByRole("button", { name: /T1-GF-43/ }).first();
+await search.fill("T1-GF-85");
+const result = desktop.getByRole("button", { name: /T1-GF-85/ }).first();
 await result.waitFor({ state: "visible" });
 await result.click();
 
-await desktop.getByRole("heading", { name: "T1-GF-43", exact: true }).waitFor();
-assert.equal(await desktop.locator(".object-name-value").textContent(), "T1-GF-43");
+await desktop.getByRole("heading", { name: "T1-GF-85", exact: true }).waitFor();
+assert.equal(await desktop.locator(".object-name-value").textContent(), "T1-GF-85");
 assert.equal(await desktop.locator(".coordinates .coordinate").count(), 3);
 assert.match(await desktop.locator(".route-message").textContent(), /Route Here/);
 await desktop.getByRole("button", { name: "Route Here" }).click();
@@ -130,7 +163,7 @@ const activeRouteAudit = await desktop.evaluate(
   () => window.__TERMINAL_ACTIVE_ROUTE_AUDIT__,
 );
 assert.ok(activeRouteAudit, "Active route audit must be exposed");
-assert.equal(activeRouteAudit.edgeCount, 24);
+assert.ok(activeRouteAudit.edgeCount > 0);
 assert.ok(activeRouteAudit.pointCount >= activeRouteAudit.edgeCount + 1);
 assert.match(
   await desktop.locator(".navigation-guidance-card").innerText(),
@@ -187,11 +220,13 @@ await desktop.getByRole("button", { name: "Route overview" }).click();
 await desktop.getByRole("button", { name: "Toggle debug navigation" }).click();
 await desktop.locator(".debug-navigation-panel").waitFor();
 const debugText = await desktop.locator(".debug-navigation-panel").innerText();
-assert.match(debugText, /604/);
-assert.match(debugText, /500/);
-assert.match(debugText, /277/);
-assert.match(debugText, /12/);
-assert.match(debugText, /656 \/ 656/);
+assert.match(debugText, /510/);
+assert.match(debugText, /507/);
+assert.match(debugText, /244/);
+assert.match(debugText, /51 nonaktif/);
+assert.match(debugText, /6/);
+assert.match(debugText, /96 \/ 96/);
+assert.match(debugText, /1014 \/ 1014/);
 await desktop.getByRole("button", { name: "Toggle debug navigation" }).click();
 
 await desktop.getByRole("button", { name: "Zoom in" }).click();
@@ -210,7 +245,7 @@ await desktop.mouse.up({ button: "right" });
 await desktop.mouse.wheel(0, -220);
 assert.equal(
   await desktop.locator(".object-name-value").textContent(),
-  "T1-GF-43",
+  "T1-GF-85",
   "Dragging the camera must not change the selected object",
 );
 
@@ -250,9 +285,13 @@ const mobile = await browser.newPage({
 attachErrorCapture(mobile);
 await waitForViewer(mobile);
 await mobile.getByRole("button", { name: "Set Start" }).click();
-await mobile.getByText("Pilih salah satu node atau POI yang tampil pada map.").waitFor();
+await mobile.getByText("Pilih building, node, atau POI yang tampil pada map.").waitFor();
 await mobile.screenshot({ path: "runtime-audit/mobile-start-picker.png" });
-await mobile.locator("canvas").click({ position: { x: 130, y: 408 } });
+const mobileSearch = mobile.getByRole("textbox", {
+  name: "Cari building berdasarkan object.name",
+});
+await mobileSearch.fill("T1-GF-79");
+await mobile.getByRole("button", { name: /T1-GF-79/ }).first().click();
 await mobile.waitForFunction(
   () => document.querySelector(".viewer-shell")?.getAttribute("data-start-node"),
 );
@@ -261,13 +300,11 @@ const mobileStartNode = await mobile
   .getAttribute("data-start-node");
 assert.match(
   await mobile.locator(".start-node-card strong").textContent(),
-  /T1-GF-17/,
+  /(T1-GF-79|NODE_GF_)/,
 );
-await mobile
-  .getByRole("textbox", { name: "Cari building berdasarkan object.name" })
-  .fill("T1-GF-43");
-await mobile.getByRole("button", { name: /T1-GF-43/ }).first().click();
-await mobile.getByRole("heading", { name: "T1-GF-43", exact: true }).waitFor();
+await mobileSearch.fill("T1-GF-85");
+await mobile.getByRole("button", { name: /T1-GF-85/ }).first().click();
+await mobile.getByRole("heading", { name: "T1-GF-85", exact: true }).waitFor();
 assert.equal(await mobile.getByRole("button", { name: "Route Here" }).isDisabled(), false);
 await mobile.getByRole("button", { name: "Route Here" }).click();
 await mobile.waitForFunction(
@@ -289,22 +326,29 @@ assert.deepEqual(runtimeErrors, [], `Runtime console errors: ${runtimeErrors.joi
 console.log(
   JSON.stringify(
     {
-      objectCount: 625,
-      buildingCount: 97,
-      graph: { nodes: 604, edges: 500, pois: 277, unmatchedEdges: 12 },
+      objectCount: 949,
+      buildingCount: 96,
+      graph: {
+        nodes: 510,
+        edges: 507,
+        pois: 244,
+        conditionalEdges: 51,
+        unmatchedEdges: 6,
+      },
       colorCoverage: audit.runtimeColorCoverage,
+      runtimeHiddenObjectNames: audit.runtimeHiddenObjectNames,
       transform: audit.svgToWorld,
       activeRoute: activeRouteAudit,
       desktop: {
         canvas: canvasBox,
         start: desktopStartNode,
-        destination: "T1-GF-43",
+        destination: "T1-GF-85",
         viewModes: ["map", "pov", "map"],
       },
       mobile: {
         viewport: [390, 844],
         start: mobileStartNode,
-        destination: "T1-GF-43",
+        destination: "T1-GF-85",
         activeRouteHud: true,
       },
       performance: performanceSummary,

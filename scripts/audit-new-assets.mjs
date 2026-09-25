@@ -4,9 +4,9 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
 const SVG_PATH = "NAVIGATION_GRAPH (2).svg";
-const GLB_PATH = "BUILDINGS 3D TERBARU.glb";
-const VIEWBOX = { minX: 0, minY: 0, width: 22973, height: 3300 };
-// Valid endpoint distances end at 16.81 SVG units; the next gap is 46.51.
+const GLB_PATH = "GLB TERBARU!.glb";
+// Latest asset audit: normal matched endpoints end near 10.01 SVG units;
+// the next gap is 50 units, so 20 remains a conservative hard cutoff.
 const MATCH_TOLERANCE = 20;
 
 function attrs(source) {
@@ -141,10 +141,13 @@ const [svg, glbBuffer] = await Promise.all([readFile(SVG_PATH, "utf8"), readFile
 const rootMatch = svg.match(/<svg\b([^>]*)>/);
 if (!rootMatch) throw new Error("SVG root not found");
 const rootAttributes = attrs(rootMatch[1]);
+const [viewBoxMinX, viewBoxMinY, viewBoxWidth, viewBoxHeight] =
+  rootAttributes.viewBox.split(/\s+/).map(Number);
 
 const poiElements = elements(groupMarkup(svg, "POI_ORANGE"));
 const ordinaryElements = elements(groupMarkup(svg, "PATH_RED"));
 const edgeElements = elements(groupMarkup(svg, "EDGES"));
+const conditionalEdgeElements = elements(groupMarkup(svg, "EDGES_CONDITIONAL"));
 
 const poiNodes = poiElements.map((element) => {
   const position =
@@ -170,22 +173,32 @@ const ordinaryNodes = ordinaryElements.map((element, index) => ({
 }));
 const nodes = [...poiNodes, ...ordinaryNodes];
 
-const edgeGeometry = edgeElements.map((element, index) => {
+function buildEdgeGeometry(sourceElements, prefix) {
+  return sourceElements.map((element, index) => {
   const points =
     element.tag === "line"
       ? [
-          { x: Number(element.attributes.x1), y: Number(element.attributes.y1) },
-          { x: Number(element.attributes.x2), y: Number(element.attributes.y2) },
-        ]
+        { x: Number(element.attributes.x1), y: Number(element.attributes.y1) },
+        { x: Number(element.attributes.x2), y: Number(element.attributes.y2) },
+      ]
       : parsePath(element.attributes.d);
   return {
-    id: "EDGE_GF_" + String(index + 1).padStart(3, "0"),
+    id:
+      prefix === "EDGE_GF_"
+        ? prefix + String(index + 1).padStart(3, "0")
+        : element.attributes.id,
     sourceId: element.attributes.id,
     points,
     start: points[0],
     end: points.at(-1),
   };
-});
+  });
+}
+const edgeGeometry = buildEdgeGeometry(edgeElements, "EDGE_GF_");
+const conditionalEdgeGeometry = buildEdgeGeometry(
+  conditionalEdgeElements,
+  "EDGE_CONDITIONAL_",
+);
 
 function nearest(point) {
   let best = null;
@@ -199,7 +212,7 @@ function nearest(point) {
 }
 
 const endpointDistances = [];
-const matchedEdges = edgeGeometry.map((edge) => {
+function matchEdge(edge) {
   const startMatch = nearest(edge.start);
   const endMatch = nearest(edge.end);
   endpointDistances.push(startMatch.distance, endMatch.distance);
@@ -210,8 +223,13 @@ const matchedEdges = edgeGeometry.map((edge) => {
     startDistance: startMatch.distance,
     endDistance: endMatch.distance,
   };
-});
+}
+const matchedEdges = edgeGeometry.map(matchEdge);
+const matchedConditionalEdges = conditionalEdgeGeometry.map(matchEdge);
 const unmatchedEdges = matchedEdges.filter((edge) => !edge.from || !edge.to);
+const unmatchedConditionalEdges = matchedConditionalEdges.filter(
+  (edge) => !edge.from || !edge.to || edge.from === edge.to,
+);
 
 const adjacency = new Map(nodes.map((node) => [node.id, []]));
 for (const edge of matchedEdges) {
@@ -333,11 +351,13 @@ const report = {
     width: Number(rootAttributes.width),
     height: Number(rootAttributes.height),
     viewBox: rootAttributes.viewBox,
-    groups: ["POI_ORANGE", "PATH_RED", "EDGES"],
+    groups: ["POI_ORANGE", "PATH_RED", "EDGES", "EDGES_CONDITIONAL"],
     nodeCount: nodes.length,
     ordinaryNodeCount: ordinaryNodes.length,
     poiCount: poiNodes.length,
     edgeCount: matchedEdges.length,
+    conditionalEdgeCount: matchedConditionalEdges.length,
+    unmatchedConditionalEdgeCount: unmatchedConditionalEdges.length,
     lineEdgeCount: edgeElements.filter((element) => element.tag === "line").length,
     pathEdgeCount: edgeElements.filter((element) => element.tag === "path").length,
     duplicateSourceIds: duplicateSvgIds,
@@ -377,6 +397,19 @@ const report = {
     isolatedNodeCount: componentSizes.filter((size) => size === 1).length,
   },
   alignment: {
+    usedTransform: {
+      scaleX: glbSize.x / viewBoxWidth,
+      scaleZ: glbSize.z / viewBoxHeight,
+      offsetX:
+        glbCenter.x -
+        (glbSize.x / viewBoxWidth) * (viewBoxMinX + viewBoxWidth / 2),
+      offsetZ:
+        glbCenter.z -
+        (glbSize.z / viewBoxHeight) * (viewBoxMinY + viewBoxHeight / 2),
+      elevationY: glbBounds.min.y + 0.12,
+      source: "source-bounds",
+      orientation: "svg +X -> world +X; svg +Y -> world +Z",
+    },
     matchedSemanticBuildings: anchors.length,
     directAxis: {
       svgXToWorldX: directX,

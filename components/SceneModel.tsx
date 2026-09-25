@@ -12,6 +12,14 @@ import {
   type ObjectMetadata,
   type SelectedObject,
 } from "@/lib/object-metadata";
+import { GROUND_FLOOR_MODEL_URL } from "@/lib/assets";
+
+// These meshes are duplicate wall/pillar geometry directly above the
+// commercial frontage (T1-GF-41 through T1-GF-48) in the supplied export.
+// The source GLB is left untouched; only their runtime visibility is disabled
+// so the website matches the approved latest map composition.
+const HIDDEN_COMMERCIAL_OVERHEAD_OBJECT =
+  /^tembok_pilar_(?:31[0-9]|63[1-9]|640|37|358)$/i;
 
 export type SceneObjectRecord = {
   uuid: string;
@@ -33,6 +41,7 @@ export type SceneBounds = {
     styledMaterialSlots: number;
     categories: Record<string, number>;
   };
+  runtimeHiddenObjectNames: string[];
 };
 
 type SceneModelProps = {
@@ -166,7 +175,7 @@ function updateSelectionMaterial(material: THREE.Material, selected: boolean) {
 }
 
 export function SceneModel({ selectedUuid, onSelect, onReady }: SceneModelProps) {
-  const gltf = useGLTF("/models/buildings-ground-floor.glb");
+  const gltf = useGLTF(GROUND_FLOOR_MODEL_URL);
   const [hovered, setHovered] = useState(false);
   const pointerStart = useRef<{ x: number; y: number; button: number } | null>(null);
 
@@ -189,6 +198,10 @@ export function SceneModel({ selectedUuid, onSelect, onReady }: SceneModelProps)
       if (!(object instanceof THREE.Mesh)) return;
 
       const sourceObjectName = object.userData.sourceObjectName || object.name;
+      if (HIDDEN_COMMERCIAL_OVERHEAD_OBJECT.test(sourceObjectName)) {
+        object.visible = false;
+        object.userData.runtimeVisibilityReason = "commercial-overhead-obstruction";
+      }
       const metadata = getObjectMetadata(sourceObjectName);
       const sourceMaterials = Array.isArray(object.material) ? object.material : [object.material];
       const runtimeMaterials = sourceMaterials.map((sourceMaterial) => {
@@ -217,12 +230,21 @@ export function SceneModel({ selectedUuid, onSelect, onReady }: SceneModelProps)
       styledMaterialSlots: 0,
       categories: {},
     };
+    const runtimeHiddenObjectNames: string[] = [];
     const nodeDefinitions = (
       gltf.parser as typeof gltf.parser & { json: { nodes?: GltfNodeDefinition[] } }
     ).json.nodes ?? [];
 
     model.traverse((object) => {
       if (object instanceof THREE.Mesh) {
+        if (
+          object.userData.runtimeVisibilityReason ===
+          "commercial-overhead-obstruction"
+        ) {
+          runtimeHiddenObjectNames.push(
+            object.userData.sourceObjectName || object.name,
+          );
+        }
         colorCoverage.renderMeshes += 1;
         const materials = Array.isArray(object.material)
           ? object.material
@@ -250,7 +272,17 @@ export function SceneModel({ selectedUuid, onSelect, onReady }: SceneModelProps)
     });
 
     objects.sort((a, b) => a.nodeIndex - b.nodeIndex);
-    onReady({ box, center, size, radius, colorCoverage }, objects);
+    onReady(
+      {
+        box,
+        center,
+        size,
+        radius,
+        colorCoverage,
+        runtimeHiddenObjectNames,
+      },
+      objects,
+    );
   }, [gltf.parser, model, onReady]);
 
   useLayoutEffect(() => {
@@ -331,4 +363,4 @@ export function SceneModel({ selectedUuid, onSelect, onReady }: SceneModelProps)
   );
 }
 
-useGLTF.preload("/models/buildings-ground-floor.glb");
+useGLTF.preload(GROUND_FLOOR_MODEL_URL);
