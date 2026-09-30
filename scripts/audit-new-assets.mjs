@@ -3,8 +3,10 @@ import { readFile } from "node:fs/promises";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
-const SVG_PATH = "NAVIGATION_GRAPH (2).svg";
-const GLB_PATH = "GLB TERBARU!.glb";
+global.self = { URL: { createObjectURL: () => "", revokeObjectURL: () => {} } };
+
+const SVG_PATH = "public/navigation/navigation-graph-ground-floor.svg";
+const GLB_PATH = "public/models/buildings-ground-floor.glb";
 // Latest asset audit: normal matched endpoints end near 10.01 SVG units;
 // the next gap is 50 units, so 20 remains a conservative hard cutoff.
 const MATCH_TOLERANCE = 20;

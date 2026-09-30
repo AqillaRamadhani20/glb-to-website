@@ -13,7 +13,14 @@ export type CategoryKey =
   | "red-area"
   | "visitor"
   | "fountain"
-  | "lost-found";
+  | "lost-found"
+  | "security"
+  | "customer-service"
+  | "seating"
+  | "prayer-room"
+  | "nursery"
+  | "toilet"
+  | "office";
 
 export type ObjectMetadata = {
   key: CategoryKey;
@@ -54,6 +61,13 @@ export const COLOR_PALETTE: Record<CategoryKey, string> = {
   visitor: "#E7D495",
   fountain: "#5AA9E6",
   "lost-found": "#8B78B8",
+  security: "#F44336",
+  "customer-service": "#FF9800",
+  seating: "#9E9E9E",
+  "prayer-room": "#009688",
+  nursery: "#E91E63",
+  toilet: "#03A9F4",
+  office: "#607D8B",
 };
 
 function categoryForObject(objectName: string): CategoryKey {
@@ -77,6 +91,15 @@ function categoryForObject(objectName: string): CategoryKey {
   }
   if (name.startsWith("keberangkatan")) return "departure";
   if (name.startsWith("kedatangan")) return "arrival";
+  
+  if (name.includes("-avsec-") || name.includes("avsec")) return "security";
+  if (name.includes("-cs-")) return "customer-service";
+  if (name.includes("-kursi-") || name.includes("kursi")) return "seating";
+  if (name.includes("-mus-") || name.includes("mushola")) return "prayer-room";
+  if (name.includes("-nr-") || name.includes("nursery")) return "nursery";
+  if (name.includes("-tl-") || name.includes("toilet")) return "toilet";
+  if (name.includes("-man-") || name.includes("office")) return "office";
+
   if (
     /^(rectangle|vector|curve)/.test(name) ||
     name.includes("wall") ||
@@ -102,6 +125,13 @@ const CATEGORY_LABELS: Record<CategoryKey, string> = {
   visitor: "Lantai area visitor",
   fountain: "Air mancur",
   "lost-found": "Lost & Found",
+  security: "Aviation Security (Avsec)",
+  "customer-service": "Customer Service",
+  seating: "Area Duduk / Kursi",
+  "prayer-room": "Mushola",
+  nursery: "Nursery Room",
+  toilet: "Toilet",
+  office: "Ruang Manajemen / Kantor",
 };
 
 export function getObjectMetadata(objectName: string): ObjectMetadata {

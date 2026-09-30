@@ -3,7 +3,9 @@ import { readFile } from "node:fs/promises";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
-const sourcePath = process.argv[2] ?? "GLB TERBARU!.glb";
+global.self = { URL: { createObjectURL: () => "", revokeObjectURL: () => {} } };
+
+const sourcePath = process.argv[2] ?? "public/models/buildings-ground-floor.glb";
 const publicPath = process.argv[3] ?? "public/models/buildings-ground-floor.glb";
 const [sourceBuffer, publicBuffer] = await Promise.all([
   readFile(sourcePath),
